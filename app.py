@@ -21,15 +21,31 @@ from __future__ import annotations
 import io
 import re
 import logging
+import uuid
 from collections import defaultdict, deque
 from datetime import date
+from decimal import Decimal
 from typing import Dict, List, Tuple, Optional, Union
 
 import pandas as pd
 import streamlit as st
+import plotly.express as px
 from thefuzz import fuzz
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from database.db_models import (
+    Company,
+    Invoice,
+    ReconciliationRun,
+    ReconciliationResult,
+    create_database,
+)
+from ml_models.vendor_risk import VendorRiskModel
+from reports.excel_report import generate_excel_report
+from reports.pdf_report import generate_pdf_report
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("itc_reconciliation")
@@ -779,6 +795,116 @@ def _build_whatsapp_draft(
     )
 
 
+def _as_date(value) -> Optional[date]:
+    parsed = pd.to_datetime(value, errors="coerce")
+    return None if pd.isna(parsed) else parsed.date()
+
+
+def save_reconciliation_run(
+    books_df: pd.DataFrame,
+    gstr2b_df: pd.DataFrame,
+    results: Dict[str, pd.DataFrame],
+    company_name: str,
+) -> Tuple[str, pd.DataFrame]:
+    """Persist one reconciliation run and its vendor risk assessment."""
+    engine = create_database()
+    run_id = uuid.uuid4().hex
+
+    with Session(engine) as session:
+        company = session.scalar(select(Company).where(Company.legal_name == company_name))
+        if company is None:
+            company = Company(legal_name=company_name)
+            session.add(company)
+            session.flush()
+
+        session.add(
+            ReconciliationRun(
+                id=run_id,
+                company_id=company.id,
+                total_books=len(books_df),
+                total_gstr2b=len(gstr2b_df),
+                matched_count=len(results["ready_to_claim"]),
+                mismatch_count=len(results["value_mismatches"]),
+                missing_in_gstr2b_count=len(results["missing_in_gstr2b"]),
+                missing_in_books_count=len(results["missing_in_books"]),
+            )
+        )
+
+        invoice_ids = {}
+        for source, frame in (("books", books_df), ("gstr2b", gstr2b_df)):
+            for _, row in frame.iterrows():
+                gstin = str(row["GSTIN"]).strip().upper()
+                invoice_number = str(row["Invoice Number"]).strip()
+                key = (source, gstin, invoice_number)
+                invoice = session.scalar(
+                    select(Invoice).where(
+                        Invoice.company_id == company.id,
+                        Invoice.source == source,
+                        Invoice.gstin == gstin,
+                        Invoice.invoice_number == invoice_number,
+                    )
+                )
+                if invoice is None:
+                    invoice = Invoice(
+                        company_id=company.id,
+                        source=source,
+                        gstin=gstin,
+                        vendor_name=str(row["Vendor Name"]),
+                        invoice_number=invoice_number,
+                        invoice_date=_as_date(row["Invoice Date"]),
+                        taxable_value=Decimal(str(row["Taxable Value"])),
+                        cgst=Decimal(str(row["CGST"])),
+                        sgst=Decimal(str(row["SGST"])),
+                        igst=Decimal(str(row["IGST"])),
+                    )
+                    session.add(invoice)
+                    session.flush()
+                invoice_ids[key] = invoice.id
+
+        category_status = {
+            "ready_to_claim": "Ready to Claim",
+            "value_mismatches": "Value Mismatch",
+            "missing_in_gstr2b": "Missing in GSTR-2B",
+            "missing_in_books": "Missing in Books",
+        }
+        for category, status in category_status.items():
+            for _, row in results[category].iterrows():
+                gstin = str(row.get("GSTIN", "")).strip().upper()
+                books_number = str(row.get("Invoice Number (Books)", "")).strip()
+                gstr_number = str(row.get("Invoice Number (GSTR-2B)", "")).strip()
+                if category == "missing_in_books":
+                    invoice_id = invoice_ids.get(("gstr2b", gstin, gstr_number))
+                else:
+                    invoice_id = invoice_ids.get(("books", gstin, books_number))
+                taxable_difference = abs(
+                    float(row.get("Taxable Value (Books)", row.get("Taxable Value", 0)))
+                    - float(row.get("Taxable Value (GSTR-2B)", 0))
+                )
+                session.add(
+                    ReconciliationResult(
+                        company_id=company.id,
+                        invoice_id=invoice_id,
+                        run_id=run_id,
+                        status=status,
+                        match_tier=row.get("Match Tier"),
+                        taxable_value_difference=Decimal(str(round(taxable_difference, 2))),
+                        tax_difference=Decimal(str(row.get("Max Tax Diff (₹)", 0))),
+                        remarks=row.get("Remarks"),
+                    )
+                )
+
+        session.commit()
+        company_id = company.id
+
+    history = pd.concat(
+        [results[key] for key in category_status], ignore_index=True, sort=False
+    )
+    risk_model = VendorRiskModel()
+    risk_scores = risk_model.calculate_vendor_risk(history)
+    risk_model.save_risk_scores(engine, risk_scores, company_id)
+    return run_id, risk_scores
+
+
 # ==========================================================================
 # SECTION 3 — Streamlit Dashboard (formerly app.py)
 # ==========================================================================
@@ -789,6 +915,23 @@ st.set_page_config(
     page_title="ITC Reconciliation Engine | GSTR-2B vs Books",
     page_icon="🧾",
     layout="wide",
+)
+
+st.markdown(
+    """
+    <style>
+    [data-testid="stMetric"] {
+        background: #f4f7f9;
+        border: 1px solid #d9e2e8;
+        border-radius: 10px;
+        padding: 12px 14px;
+    }
+    [data-testid="stMetricValue"] { color: #173f5f; }
+    div[data-baseweb="tab-list"] { gap: 8px; }
+    button[kind="primary"] { background: #1f4e78; border-color: #1f4e78; }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 
@@ -917,12 +1060,21 @@ if run:
     try:
         with st.spinner("Cleaning data and running the 3-tier matching engine..."):
             results = engine.reconcile(books_df, gstr2b_df)
+            run_id, risk_scores = save_reconciliation_run(
+                books_df, gstr2b_df, results, company_name
+            )
         st.session_state["results"] = results
+        st.session_state["risk_scores"] = risk_scores
+        st.session_state["run_id"] = run_id
         st.session_state["warnings"] = engine.get_warnings()
         st.session_state["engine_settings"] = (tolerance, fuzzy_threshold)
-        st.success("Reconciliation complete.")
+        st.success(f"Reconciliation complete and saved to gst_reconciliation.db (run {run_id[:8]}).")
     except ReconciliationError as e:
         st.error(f"Reconciliation failed: {e}")
+        st.stop()
+    except Exception as e:  # noqa: BLE001 - keep database/model failures visible in the UI
+        logger.exception("Failed to persist reconciliation run or calculate vendor risk")
+        st.error(f"Reconciliation completed, but saving analytics failed: {e}")
         st.stop()
 
 # --------------------------------------------------------------------------
@@ -957,6 +1109,7 @@ if "results" in st.session_state:
             "📥 Missing in Books",
             "⚠️ Value Mismatches",
             "📨 Vendor Nudge Bot",
+            "📈 Executive Risk & Analytics",
             "📊 Summary",
         ]
     )
@@ -1002,23 +1155,106 @@ if "results" in st.session_state:
                     st.text_area("WhatsApp Draft", d["WhatsApp Draft"], height=160, key=f"wa_{d['GSTIN']}")
 
     with tabs[5]:
+        st.subheader("Executive Risk & Analytics Dashboard")
+        risk_scores = st.session_state.get("risk_scores", pd.DataFrame())
+        match_status = pd.DataFrame(
+            {
+                "Match Status": [
+                    "Ready to Claim",
+                    "Value Mismatch",
+                    "Missing in GSTR-2B",
+                    "Missing in Books",
+                ],
+                "Invoices": [
+                    len(results["ready_to_claim"]),
+                    len(results["value_mismatches"]),
+                    len(results["missing_in_gstr2b"]),
+                    len(results["missing_in_books"]),
+                ],
+            }
+        )
+        match_chart = px.pie(
+            match_status,
+            names="Match Status",
+            values="Invoices",
+            hole=0.45,
+            color="Match Status",
+            color_discrete_map={
+                "Ready to Claim": "#287d58",
+                "Value Mismatch": "#e67e22",
+                "Missing in GSTR-2B": "#c0392b",
+                "Missing in Books": "#61758a",
+            },
+            title="Invoice Match Status",
+        )
+
+        if risk_scores.empty:
+            st.info("No vendor risk scores were produced for this reconciliation run.")
+            risk_level_counts = pd.DataFrame(
+                {"Risk Category": ["Low", "Medium", "High"], "Vendors": [0, 0, 0]}
+            )
+        else:
+            category_column = "Risk Category" if "Risk Category" in risk_scores else "risk_level"
+            risk_level_counts = (
+                risk_scores[category_column]
+                .rename("Risk Category")
+                .value_counts()
+                .reindex(["Low", "Medium", "High"], fill_value=0)
+                .rename_axis("Risk Category")
+                .reset_index(name="Vendors")
+            )
+            high_risk = int((risk_scores[category_column] == "High").sum())
+            total_blocked = float(risk_scores["blocked_itc"].sum())
+            r1, r2, r3 = st.columns(3)
+            r1.metric("Vendors Assessed", len(risk_scores))
+            r2.metric("High Risk Vendors", high_risk)
+            r3.metric("Blocked ITC in Risk Model (₹)", f"{total_blocked:,.2f}")
+
+        risk_chart = px.bar(
+            risk_level_counts,
+            x="Risk Category",
+            y="Vendors",
+            color="Risk Category",
+            text="Vendors",
+            color_discrete_map={"High": "#c0392b", "Medium": "#e67e22", "Low": "#287d58"},
+            title="Vendor Risk Levels",
+        )
+        chart_cols = st.columns(2)
+        with chart_cols[0]:
+            st.plotly_chart(match_chart, use_container_width=True)
+        with chart_cols[1]:
+            st.plotly_chart(risk_chart, use_container_width=True)
+        if not risk_scores.empty:
+            st.dataframe(risk_scores, use_container_width=True, hide_index=True)
+
+    with tabs[6]:
         st.dataframe(results["summary"], use_container_width=True, hide_index=True)
 
     st.divider()
     st.subheader("⬇️ Export Reconciled Report")
 
-    tol, fth = st.session_state.get("engine_settings", (tolerance, fuzzy_threshold))
-    export_engine = ITCReconciliationEngine(tolerance=tol, fuzzy_threshold=fth)
-    output_buffer = io.BytesIO()
-    export_engine.export_to_excel(results, output_buffer)
-
-    st.download_button(
-        "Download Excel Report (.xlsx)",
-        data=output_buffer.getvalue(),
-        file_name=f"ITC_Reconciliation_Report_{date.today().isoformat()}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
+    excel_buffer = generate_excel_report(results)
+    pdf_buffer = generate_pdf_report(
+        summary=results["summary"],
+        risk_scores=st.session_state.get("risk_scores"),
     )
+    export_cols = st.columns(2)
+    with export_cols[0]:
+        st.download_button(
+            "Download Excel Report (.xlsx)",
+            data=excel_buffer.getvalue(),
+            file_name=f"ITC_Reconciliation_Report_{date.today().isoformat()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+    with export_cols[1]:
+        st.download_button(
+            "Download Executive Audit (.pdf)",
+            data=pdf_buffer.getvalue(),
+            file_name=f"Executive_Risk_Reconciliation_Audit_{date.today().isoformat()}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
 
 else:
     st.info("Upload both files above, confirm the column mapping, then click **Run Reconciliation** to begin.")
