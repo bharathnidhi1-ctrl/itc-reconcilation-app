@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ITC Reconciliation Engine</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+  :root {
+    --navy:   #0B1120;
+    --navy2:  #111827;
+    --panel:  #161F30;
+    --border: #1E2D45;
+    --accent: #2563EB;
+    --accent2:#3B82F6;
+    --gold:   #F59E0B;
+    --green:  #10B981;
+    --red:    #EF4444;
+    --muted:  #64748B;
+    --text:   #E2E8F0;
+    --sub:    #94A3B8;
+  }
+
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--navy);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    overflow-x: hidden;
+    perspective: 1200px;
+  }
+
+  /* ═══════════════════════════════════════
+     CANVAS PARTICLE BACKGROUND
+  ═══════════════════════════════════════ */
+  #bg-canvas {
+    position: fixed; inset: 0;
+    z-index: 0; pointer-events: none;
+  }
+
+  /* ═══════════════════════════════════════
+     GRID + GLOW
+  ═══════════════════════════════════════ */
+  .grid-overlay {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(37,99,235,0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(37,99,235,0.05) 1px, transparent 1px);
+    background-size: 52px 52px;
+  }
+  .blob {
+    position: fixed; border-radius: 50%;
+    filter: blur(130px); pointer-events: none; z-index: 0;
+    animation: blobFloat 8s ease-in-out infinite alternate;
+  }
+  .blob-1 { width:600px;height:600px;background:rgba(37,99,235,0.13);top:-120px;right:-100px;animation-delay:0s; }
+  .blob-2 { width:450px;height:450px;background:rgba(16,185,129,0.08);bottom:50px;left:-120px;animation-delay:3s; }
+  .blob-3 { width:350px;height:350px;background:rgba(245,158,11,0.06);top:45%;left:38%;animation-delay:6s; }
+  @keyframes blobFloat {
+    from { transform: scale(1) translate(0,0); }
+    to   { transform: scale(1.08) translate(20px,20px); }
+  }
+
+  /* ═══════════════════════════════════════
+     NAV
+  ═══════════════════════════════════════ */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 52px;
+    border-bottom: 1px solid rgba(37,99,235,0.15);
+    backdrop-filter: blur(20px) saturate(180%);
+    background: rgba(11,17,32,0.75);
+    transition: all 0.3s;
+  }
+  nav.scrolled { padding: 12px 52px; background: rgba(11,17,32,0.95); }
+  .nav-logo {
+    display: flex; align-items: center; gap: 12px;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700; font-size: 17px; color: var(--text);
+    text-decoration: none;
+  }
+  .logo-3d {
+    width: 38px; height: 38px;
+    background: linear-gradient(135deg, #2563EB, #1D4ED8);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    box-shadow: 0 4px 14px rgba(37,99,235,0.5), 0 0 0 1px rgba(37,99,235,0.3);
+    transform-style: preserve-3d;
+    transition: transform 0.3s;
+  }
+  .logo-3d:hover { transform: rotateY(20deg) rotateX(10deg); }
+  .nav-pill {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+    background: rgba(37,99,235,0.12);
+    border: 1px solid rgba(37,99,235,0.25);
+    color: var(--accent2); padding: 4px 12px; border-radius: 20px;
+  }
+  .nav-cta {
+    background: linear-gradient(135deg, #2563EB, #1D4ED8);
+    color: #fff; font-size: 14px; font-weight: 600;
+    padding: 10px 24px; border-radius: 10px; text-decoration: none;
+    box-shadow: 0 4px 16px rgba(37,99,235,0.4);
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .nav-cta:hover { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(37,99,235,0.55); }
+
+  /* ═══════════════════════════════════════
+     HERO
+  ═══════════════════════════════════════ */
+  .hero {
+    position: relative; z-index: 2;
+    min-height: 100vh;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center; padding: 120px 24px 60px;
+  }
+  .hero-eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--gold);
+    background: rgba(245,158,11,0.08);
+    border: 1px solid rgba(245,158,11,0.22);
+    padding: 7px 16px; border-radius: 20px;
+    margin-bottom: 30px;
+    animation: fadeDown 0.7s ease both;
+  }
+  .live-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--gold);
+    box-shadow: 0 0 0 0 rgba(245,158,11,0.6);
+    animation: livePulse 2s infinite;
+  }
+  @keyframes livePulse {
+    0%   { box-shadow: 0 0 0 0 rgba(245,158,11,0.6); }
+    70%  { box-shadow: 0 0 0 8px rgba(245,158,11,0); }
+    100% { box-shadow: 0 0 0 0 rgba(245,158,11,0); }
+  }
+
+  h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: clamp(42px, 7vw, 76px);
+    font-weight: 700; line-height: 1.08;
+    letter-spacing: -0.03em; color: #F8FAFC;
+    margin-bottom: 22px;
+    animation: fadeUp 0.8s 0.1s ease both;
+  }
+  .grad-text {
+    background: linear-gradient(100deg, #60A5FA, #34D399, #60A5FA);
+    background-size: 200%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: shimmer 3s linear infinite;
+  }
+  @keyframes shimmer { from{background-position:0%} to{background-position:200%} }
+
+  .hero-sub {
+    font-size: 19px; color: var(--sub);
+    line-height: 1.7; max-width: 600px;
+    margin: 0 auto 44px;
+    animation: fadeUp 0.8s 0.2s ease both;
+  }
+  .hero-btns {
+    display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;
+    animation: fadeUp 0.8s 0.3s ease both;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, #2563EB, #1D4ED8);
+    color: #fff; font-size: 15px; font-weight: 700;
+    padding: 15px 34px; border-radius: 12px; text-decoration: none;
+    display: inline-flex; align-items: center; gap: 9px;
+    box-shadow: 0 6px 28px rgba(37,99,235,0.45), 0 0 0 1px rgba(37,99,235,0.3);
+    transition: transform 0.2s, box-shadow 0.2s;
+    position: relative; overflow: hidden;
+  }
+  .btn-primary::after {
+    content:''; position:absolute; inset:0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);
+    opacity:0; transition: opacity 0.2s;
+  }
+  .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 12px 36px rgba(37,99,235,0.55); }
+  .btn-primary:hover::after { opacity:1; }
+  .btn-ghost {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: var(--text); font-size: 15px; font-weight: 500;
+    padding: 15px 30px; border-radius: 12px; text-decoration: none;
+    display: inline-flex; align-items: center; gap: 8px;
+    transition: background 0.2s, border-color 0.2s, transform 0.2s;
+  }
+  .btn-ghost:hover { background: rgba(255,255,255,0.09); transform: translateY(-2px); border-color: rgba(255,255,255,0.22); }
+
+  /* ═══════════════════════════════════════
+     3D FLOATING DASHBOARD MOCKUP
+  ═══════════════════════════════════════ */
+  .hero-visual {
+    position: relative; z-index: 2;
+    margin: 60px auto 0; max-width: 780px; width: 100%;
+    animation: fadeUp 0.9s 0.4s ease both;
+  }
+  .dashboard-3d {
+    transform: perspective(1000px) rotateX(12deg) rotateY(-3deg);
+    transform-style: preserve-3d;
+    transition: transform 0.5s ease;
+    border-radius: 16px;
+    box-shadow:
+      0 60px 120px rgba(0,0,0,0.6),
+      0 20px 40px rgba(37,99,235,0.2),
+      0 0 0 1px rgba(37,99,235,0.2);
+  }
+  .dashboard-3d:hover {
+    transform: perspective(1000px) rotateX(4deg) rotateY(0deg) translateY(-8px);
+  }
+  .dash-window {
+    background: #0F172A;
+    border-radius: 16px; overflow: hidden;
+    border: 1px solid rgba(37,99,235,0.2);
+  }
+  .dash-bar {
+    background: #1E293B;
+    padding: 12px 18px;
+    display: flex; align-items: center; gap: 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+  .dash-dot { width:11px;height:11px;border-radius:50%; }
+  .dash-dot.r{background:#FF5F57;} .dash-dot.y{background:#FFBD2E;} .dash-dot.g{background:#28CA41;}
+  .dash-url {
+    flex:1; background: rgba(255,255,255,0.04);
+    border-radius: 6px; padding: 5px 12px;
+    font-size: 11px; color: var(--sub); font-family: monospace;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .dash-body { padding: 22px 22px 16px; }
+
+  /* mini metric bar */
+  .dash-metrics {
+    display: grid; grid-template-columns: repeat(5,1fr); gap: 10px; margin-bottom: 18px;
+  }
+  .dash-metric {
+    background: #1E293B;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px; padding: 12px 10px; text-align: center;
+    transition: transform 0.2s;
+  }
+  .dash-metric:hover { transform: translateY(-3px); }
+  .dm-val { font-family:'Space Grotesk',sans-serif; font-size:18px; font-weight:700; color:#F8FAFC; }
+  .dm-lbl { font-size:9px; color:var(--sub); margin-top:3px; text-transform:uppercase; letter-spacing:0.06em; }
+
+  /* mini table */
+  .dash-table { width:100%; border-collapse:collapse; }
+  .dash-table th {
+    text-align:left; font-size:10px; font-weight:700;
+    letter-spacing:0.08em; text-transform:uppercase;
+    color:var(--sub); padding:8px 10px;
+    border-bottom:1px solid rgba(255,255,255,0.06);
+  }
+  .dash-table td {
+    font-size:12px; padding:9px 10px;
+    border-bottom:1px solid rgba(255,255,255,0.03);
+    color:var(--text);
+  }
+  .dash-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .tag {
+    display:inline-block; font-size:10px; font-weight:700;
+    padding:3px 9px; border-radius:20px;
+  }
+  .tag-g { background:rgba(16,185,129,0.12); color:#34D399; }
+  .tag-y { background:rgba(245,158,11,0.12); color:#FCD34D; }
+  .tag-b { background:rgba(37,99,235,0.12);  color:#93C5FD; }
+  .tag-r { background:rgba(239,68,68,0.12);  color:#FCA5A5; }
+
+  /* floating cards */
+  .float-card {
+    position: absolute;
+    background: rgba(22,31,48,0.92);
+    border: 1px solid rgba(37,99,235,0.25);
+    border-radius: 12px; padding: 14px 18px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(37,99,235,0.15);
+    transform-style: preserve-3d;
+    z-index: 10;
+  }
+  .fc-left {
+    left: -90px; top: 30%;
+    animation: floatY 4s ease-in-out infinite;
+  }
+  .fc-right {
+    right: -90px; top: 20%;
+    animation: floatY 4s ease-in-out infinite reverse;
+    animation-delay: 2s;
+  }
+  @keyframes floatY {
+    0%,100% { transform: translateY(0) rotateY(-5deg); }
+    50%      { transform: translateY(-12px) rotateY(5deg); }
+  }
+  .fc-num { font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:700; }
+  .fc-num.green { color: var(--green); }
+  .fc-num.red   { color: var(--red); }
+  .fc-lbl { font-size:11px; color:var(--sub); margin-top:2px; }
+  .fc-bar {
+    height: 4px; border-radius: 4px; margin-top: 8px;
+    background: rgba(255,255,255,0.06);
+    overflow: hidden;
+  }
+  .fc-fill { height:100%; border-radius:4px; }
+  .fc-fill.green { background:linear-gradient(90deg,#10B981,#34D399); width:78%; }
+  .fc-fill.red   { background:linear-gradient(90deg,#EF4444,#F87171); width:22%; }
+
+  /* ═══════════════════════════════════════
+     SCROLL REVEAL
+  ═══════════════════════════════════════ */
+  .reveal {
+    opacity: 0; transform: translateY(32px);
+    transition: opacity 0.7s ease, transform 0.7s ease;
+  }
+  .reveal.visible { opacity:1; transform:translateY(0); }
+  .reveal-d1 { transition-delay: 0.1s; }
+  .reveal-d2 { transition-delay: 0.2s; }
+  .reveal-d3 { transition-delay: 0.3s; }
+
+  /* ═══════════════════════════════════════
+     SECTIONS
+  ═══════════════════════════════════════ */
+  .wrap { position:relative;z-index:2; max-width:1080px;margin:0 auto;padding:0 24px; }
+  .sec { padding: 96px 0; }
+  .sec-label { font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:var(--accent2);margin-bottom:10px; }
+  .sec-title { font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,4vw,40px);font-weight:700;color:#F8FAFC;margin-bottom:10px; }
+  .sec-sub   { font-size:16px;color:var(--sub);margin-bottom:44px;max-width:520px; }
+
+  /* ═══════════════════════════════════════
+     3-TIER PIPELINE (3D Cards)
+  ═══════════════════════════════════════ */
+  .pipeline { display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:0;align-items:stretch; }
+  .tier-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px 28px;
+    transform-style: preserve-3d;
+    transition: transform 0.4s, box-shadow 0.4s, border-color 0.3s;
+    cursor: default;
+    position: relative; overflow: hidden;
+  }
+  .tier-card::before {
+    content:''; position:absolute; top:0;left:0;right:0; height:3px;
+    border-radius:16px 16px 0 0;
+  }
+  .tier-card:hover {
+    transform: perspective(600px) rotateX(-6deg) translateY(-8px);
+    box-shadow: 0 30px 60px rgba(0,0,0,0.4);
+  }
+  .tier-1-card::before { background:linear-gradient(90deg,#10B981,#34D399); }
+  .tier-2-card::before { background:linear-gradient(90deg,#F59E0B,#FCD34D); }
+  .tier-3-card::before { background:linear-gradient(90deg,#2563EB,#60A5FA); }
+  .tier-1-card:hover { border-color:rgba(16,185,129,0.4); box-shadow:0 30px 60px rgba(0,0,0,0.4),0 0 40px rgba(16,185,129,0.1); }
+  .tier-2-card:hover { border-color:rgba(245,158,11,0.4); box-shadow:0 30px 60px rgba(0,0,0,0.4),0 0 40px rgba(245,158,11,0.1); }
+  .tier-3-card:hover { border-color:rgba(37,99,235,0.4);  box-shadow:0 30px 60px rgba(0,0,0,0.4),0 0 40px rgba(37,99,235,0.1); }
+  .tier-num-label { font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px; }
+  .t1 .tier-num-label{color:var(--green);} .t2 .tier-num-label{color:var(--gold);} .t3 .tier-num-label{color:var(--accent2);}
+  .tier-icon-3d {
+    width:52px;height:52px;border-radius:14px;
+    display:flex;align-items:center;justify-content:center;font-size:24px;
+    margin-bottom:16px;
+    transform-style:preserve-3d;
+    box-shadow:0 8px 20px rgba(0,0,0,0.3);
+  }
+  .t1 .tier-icon-3d{background:rgba(16,185,129,0.15);box-shadow:0 8px 20px rgba(16,185,129,0.2);}
+  .t2 .tier-icon-3d{background:rgba(245,158,11,0.12);box-shadow:0 8px 20px rgba(245,158,11,0.15);}
+  .t3 .tier-icon-3d{background:rgba(37,99,235,0.12); box-shadow:0 8px 20px rgba(37,99,235,0.2);}
+  .tier-card h3 { font-family:'Space Grotesk',sans-serif;font-size:19px;font-weight:700;color:#F8FAFC;margin-bottom:10px; }
+  .tier-card p  { font-size:13px;color:var(--sub);line-height:1.7; }
+  .tier-badge   { display:inline-block;margin-top:18px;font-size:11px;font-weight:700;padding:4px 12px;border-radius:20px; }
+  .t1 .tier-badge{background:rgba(16,185,129,0.12);color:var(--green);}
+  .t2 .tier-badge{background:rgba(245,158,11,0.12);color:var(--gold);}
+  .t3 .tier-badge{background:rgba(37,99,235,0.12); color:var(--accent2);}
+  .pipe-arrow {
+    display:flex;align-items:center;justify-content:center;padding:0 8px;
+    color:var(--border);font-size:22px;
+  }
+
+  /* ═══════════════════════════════════════
+     3D TILT FEATURE CARDS
+  ═══════════════════════════════════════ */
+  .cards-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:18px; }
+  .feat-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px; padding: 28px 24px;
+    transform-style: preserve-3d;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.2s;
+    cursor: default; position:relative; overflow:hidden;
+  }
+  .feat-card::after {
+    content:'';position:absolute;inset:0;border-radius:14px;
+    background:radial-gradient(circle at var(--mx,50%) var(--my,50%),rgba(255,255,255,0.04) 0%,transparent 60%);
+    opacity:0;transition:opacity 0.3s;pointer-events:none;
+  }
+  .feat-card:hover::after { opacity:1; }
+  .feat-card:hover { border-color:rgba(37,99,235,0.35); box-shadow:0 24px 50px rgba(0,0,0,0.4),0 0 30px rgba(37,99,235,0.08); }
+  .feat-icon {
+    width:46px;height:46px;border-radius:12px;
+    display:flex;align-items:center;justify-content:center;font-size:22px;
+    margin-bottom:16px;
+    box-shadow:0 6px 16px rgba(0,0,0,0.25);
+  }
+  .fi-blue  {background:rgba(37,99,235,0.15);}  .fi-green{background:rgba(16,185,129,0.12);}
+  .fi-gold  {background:rgba(245,158,11,0.12);} .fi-red  {background:rgba(239,68,68,0.11);}
+  .fi-purple{background:rgba(139,92,246,0.12);} .fi-cyan {background:rgba(6,182,212,0.12);}
+  .feat-card h3 { font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:700;color:#F8FAFC;margin-bottom:8px; }
+  .feat-card p  { font-size:13px;color:var(--sub);line-height:1.65; }
+
+  /* ═══════════════════════════════════════
+     3D RESULT TABLE
+  ═══════════════════════════════════════ */
+  .result-box {
+    background: #0F172A;
+    border: 1px solid rgba(37,99,235,0.2);
+    border-radius: 16px; overflow:hidden;
+    box-shadow: 0 40px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(37,99,235,0.12);
+    transform: perspective(900px) rotateX(3deg);
+    transition: transform 0.4s;
+  }
+  .result-box:hover { transform: perspective(900px) rotateX(0deg) translateY(-4px); }
+  .rb-header {
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 22px;
+    background:#1E293B;
+    border-bottom:1px solid rgba(255,255,255,0.05);
+  }
+  .rb-dots { display:flex;gap:6px; }
+  .rb-dots span{width:11px;height:11px;border-radius:50%;}
+  .dot-r{background:#FF5F57;}.dot-y{background:#FFBD2E;}.dot-g{background:#28CA41;}
+  .rb-name{font-size:12px;color:var(--sub);font-family:monospace;}
+  .rb-live{font-size:11px;color:var(--green);display:flex;align-items:center;gap:5px;}
+  .rb-live::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green);animation:livePulse 2s infinite;}
+  .rb-body { padding:22px; }
+  .rt { width:100%;border-collapse:collapse; }
+  .rt th{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--sub);padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.06);text-align:left;}
+  .rt td{font-size:13px;padding:11px 12px;border-bottom:1px solid rgba(255,255,255,0.03);color:var(--text);}
+  .rt tr:last-child td{border-bottom:none;}
+  .rt tr:hover td{background:rgba(255,255,255,0.025);}
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:4px 11px;border-radius:20px;}
+  .b-exact {background:rgba(16,185,129,0.12);color:#34D399;}
+  .b-tol   {background:rgba(245,158,11,0.12);color:#FCD34D;}
+  .b-fuzz  {background:rgba(37,99,235,0.12); color:#93C5FD;}
+  .b-miss  {background:rgba(239,68,68,0.10); color:#FCA5A5;}
+  .b-mmis  {background:rgba(245,158,11,0.10);color:#FDE68A;}
+
+  /* ═══════════════════════════════════════
+     RISK HEATMAP 3D
+  ═══════════════════════════════════════ */
+  .heatmap-wrap {
+    transform: perspective(800px) rotateX(8deg) rotateY(-2deg);
+    transform-style: preserve-3d;
+    transition: transform 0.5s;
+    border-radius:14px;
+    box-shadow:0 40px 80px rgba(0,0,0,0.5),0 0 0 1px rgba(37,99,235,0.15);
+  }
+  .heatmap-wrap:hover { transform:perspective(800px) rotateX(2deg) rotateY(0deg); }
+  .heatmap-box {
+    background:#0F172A;border:1px solid rgba(37,99,235,0.2);
+    border-radius:14px;padding:28px;
+  }
+  .risk-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:8px;}
+  .rc {
+    height:44px;border-radius:8px;
+    display:flex;align-items:center;justify-content:center;
+    font-size:9px;font-weight:700;font-family:monospace;
+    transition:transform 0.15s,box-shadow 0.15s;
+    cursor:default;
+  }
+  .rc:hover{transform:translateZ(10px) scale(1.12);z-index:10;}
+  .rh{background:rgba(239,68,68,0.18);color:#FCA5A5;border:1px solid rgba(239,68,68,0.3);box-shadow:0 4px 12px rgba(239,68,68,0.15);}
+  .rh:hover{box-shadow:0 8px 24px rgba(239,68,68,0.35);}
+  .rm{background:rgba(245,158,11,0.14);color:#FCD34D;border:1px solid rgba(245,158,11,0.25);box-shadow:0 4px 12px rgba(245,158,11,0.12);}
+  .rm:hover{box-shadow:0 8px 24px rgba(245,158,11,0.3);}
+  .rl{background:rgba(16,185,129,0.12);color:#6EE7B7;border:1px solid rgba(16,185,129,0.2);box-shadow:0 4px 12px rgba(16,185,129,0.1);}
+  .rl:hover{box-shadow:0 8px 24px rgba(16,185,129,0.25);}
+  .rn{background:rgba(255,255,255,0.03);color:var(--border);border:1px solid var(--border);}
+  .legend{display:flex;gap:22px;margin-top:18px;font-size:12px;flex-wrap:wrap;}
+  .leg{display:flex;align-items:center;gap:7px;color:var(--sub);}
+  .leg-dot{width:10px;height:10px;border-radius:3px;}
+
+  /* ═══════════════════════════════════════
+     STATS STRIP 3D
+  ═══════════════════════════════════════ */
+  .stats-strip {
+    position:relative;z-index:2;
+    display:flex;justify-content:center;
+    border-top:1px solid var(--border);border-bottom:1px solid var(--border);
+    background:rgba(22,31,48,0.5);backdrop-filter:blur(10px);
+    margin-bottom:0;
+  }
+  .stat-item {
+    flex:1;max-width:200px;padding:30px 20px;text-align:center;
+    border-right:1px solid var(--border);
+    transition:background 0.2s,transform 0.2s;
+  }
+  .stat-item:last-child{border-right:none;}
+  .stat-item:hover{background:rgba(37,99,235,0.06);transform:translateY(-3px);}
+  .stat-val{font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:700;color:#F8FAFC;}
+  .stat-val span{color:var(--accent2);}
+  .stat-lbl{font-size:11px;color:var(--sub);margin-top:5px;font-weight:500;}
+
+  /* ═══════════════════════════════════════
+     CTA BANNER
+  ═══════════════════════════════════════ */
+  .cta-wrap{position:relative;z-index:2;padding:0 24px 100px;}
+  .cta-inner {
+    background:linear-gradient(135deg,rgba(37,99,235,0.14),rgba(16,185,129,0.07));
+    border:1px solid rgba(37,99,235,0.22);
+    border-radius:20px;padding:64px 48px;text-align:center;
+    overflow:hidden;position:relative;
+    transform:perspective(800px) rotateX(3deg);
+    transition:transform 0.4s;
+    box-shadow:0 40px 80px rgba(0,0,0,0.3),0 0 80px rgba(37,99,235,0.08);
+  }
+  .cta-inner:hover{transform:perspective(800px) rotateX(0deg) translateY(-4px);}
+  .cta-inner::before{
+    content:'';position:absolute;inset:0;
+    background:radial-gradient(ellipse at 50% -20%,rgba(37,99,235,0.12) 0%,transparent 65%);
+  }
+  .cta-inner h2{
+    font-family:'Space Grotesk',sans-serif;
+    font-size:clamp(24px,4vw,40px);font-weight:700;color:#F8FAFC;
+    margin-bottom:14px;position:relative;
+  }
+  .cta-inner p{font-size:16px;color:var(--sub);margin-bottom:36px;position:relative;}
+
+  /* ═══════════════════════════════════════
+     FOOTER
+  ═══════════════════════════════════════ */
+  footer{
+    position:relative;z-index:2;
+    border-top:1px solid var(--border);
+    padding:28px 52px;
+    display:flex;justify-content:space-between;align-items:center;
+    font-size:13px;color:var(--muted);
+    flex-wrap:wrap;gap:12px;
+  }
+  .footer-live{
+    display:inline-flex;align-items:center;gap:7px;
+    background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.18);
+    color:var(--green);font-size:11px;font-weight:700;
+    padding:5px 14px;border-radius:20px;
+  }
+  .footer-live::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--green);animation:livePulse 2s infinite;}
+
+  /* ═══════════════════════════════════════
+     ANIMATIONS
+  ═══════════════════════════════════════ */
+  @keyframes fadeUp   {from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes fadeDown {from{opacity:0;transform:translateY(-16px)}to{opacity:1;transform:translateY(0)}}
+
+  @media(max-width:768px){
+    nav{padding:14px 20px;}
+    .nav-pill{display:none;}
+    .pipeline{display:flex;flex-direction:column;gap:12px;}
+    .pipe-arrow{transform:rotate(90deg);}
+    .cards-grid{grid-template-columns:1fr 1fr;}
+    .dash-metrics{grid-template-columns:repeat(3,1fr);}
+    .fc-left,.fc-right{display:none;}
+    .stats-strip{flex-wrap:wrap;}
+    footer{flex-direction:column;text-align:center;}
+    .dashboard-3d{transform:none;}
+    .heatmap-wrap{transform:none;}
+  }
+  @media(max-width:480px){
+    .cards-grid{grid-template-columns:1fr;}
+    h1{font-size:36px;}
+  }
+</style>
+</head>
+<body>
+
+<canvas id="bg-canvas"></canvas>
+<div class="grid-overlay"></div>
+<div class="blob blob-1"></div>
+<div class="blob blob-2"></div>
+<div class="blob blob-3"></div>
+
+<!-- ── NAV ── -->
+<nav id="navbar">
+  <a class="nav-logo" href="#">
+    <div class="logo-3d">🧾</div>
+    ITC Recon Engine
+  </a>
+  <span class="nav-pill">GST Sec 16(2)(aa) Compliant</span>
+  <a class="nav-cta" href="https://itc-reconcilation-app-2zy97e7ciqmgl6cspzrhzy.streamlit.app/" target="_blank">Launch App →</a>
+</nav>
+
+<!-- ── HERO ── -->
+<section class="hero">
+  <div class="hero-eyebrow">
+    <span class="live-dot"></span>
+    GSTR-2B vs. Purchase Register · Live
+  </div>
+  <h1>Reconcile ITC.<br><span class="grad-text">Claim What's Yours.</span></h1>
+  <p class="hero-sub">
+    Enterprise-grade Input Tax Credit reconciliation with 3-tier intelligent matching,
+    automated vendor nudges, and ML-powered risk scoring — built for Indian GST compliance.
+  </p>
+  <div class="hero-btns">
+    <a class="btn-primary" href="https://itc-reconcilation-app-2zy97e7ciqmgl6cspzrhzy.streamlit.app/" target="_blank">🚀 Open App</a>
+    <a class="btn-ghost"   href="https://github.com/bharathnidhi1-ctrl/itc-reconcilation-app" target="_blank">⭐ GitHub Repo</a>
+  </div>
+
+  <!-- 3D DASHBOARD MOCKUP -->
+  <div class="hero-visual" id="heroVisual">
+    <div class="float-card fc-left">
+      <div class="fc-num green">₹4.2L</div>
+      <div class="fc-lbl">ITC Matched</div>
+      <div class="fc-bar"><div class="fc-fill green"></div></div>
+    </div>
+    <div class="float-card fc-right">
+      <div class="fc-num red">₹1.1L</div>
+      <div class="fc-lbl">Blocked ITC</div>
+      <div class="fc-bar"><div class="fc-fill red"></div></div>
+    </div>
+    <div class="dashboard-3d" id="dash3d">
+      <div class="dash-window">
+        <div class="dash-bar">
+          <span class="dash-dot r"></span>
+          <span class="dash-dot y"></span>
+          <span class="dash-dot g"></span>
+          <div class="dash-url">itc-reconcilation-app.streamlit.app</div>
+          <span style="font-size:11px;color:var(--green);">🔒 Secure</span>
+        </div>
+        <div class="dash-body">
+          <div class="dash-metrics">
+            <div class="dash-metric"><div class="dm-val">40</div><div class="dm-lbl">Books</div></div>
+            <div class="dash-metric"><div class="dm-val">38</div><div class="dm-lbl">GSTR-2B</div></div>
+            <div class="dash-metric"><div class="dm-val" style="color:var(--green)">31</div><div class="dm-lbl">Matched</div></div>
+            <div class="dash-metric"><div class="dm-val" style="color:var(--red)">5</div><div class="dm-lbl">Missing</div></div>
+            <div class="dash-metric"><div class="dm-val" style="color:var(--gold)">4</div><div class="dm-lbl">Mismatch</div></div>
+          </div>
+          <table class="dash-table">
+            <thead>
+              <tr><th>Invoice</th><th>Vendor</th><th>Tax ₹</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>INV/2025/001</td><td>Sundaram Textiles</td><td>18,540</td><td><span class="tag tag-g">✓ Exact</span></td></tr>
+              <tr><td>PUR-2025-088</td><td>Everest IT Solutions</td><td>9,720</td><td><span class="tag tag-y">≈ Tolerance</span></td></tr>
+              <tr><td>INV2025009</td><td>Chennai Traders</td><td>6,300</td><td><span class="tag tag-b">~ Fuzzy 92%</span></td></tr>
+              <tr><td>BILL/25/042</td><td>Raj Suppliers</td><td>11,880</td><td><span class="tag tag-r">✗ Missing</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── STATS STRIP ── -->
+<div class="stats-strip">
+  <div class="stat-item reveal"><div class="stat-val"><span>3</span>-Tier</div><div class="stat-lbl">Matching Engine</div></div>
+  <div class="stat-item reveal reveal-d1"><div class="stat-val">Sec <span>16</span></div><div class="stat-lbl">CGST Act Compliant</div></div>
+  <div class="stat-item reveal reveal-d2"><div class="stat-val"><span>∞</span></div><div class="stat-lbl">Invoices Supported</div></div>
+  <div class="stat-item reveal reveal-d3"><div class="stat-val"><span>Auto</span></div><div class="stat-lbl">Vendor Nudge Drafts</div></div>
+  <div class="stat-item reveal reveal-d3"><div class="stat-val"><span>ML</span></div><div class="stat-lbl">Risk Scoring</div></div>
+</div>
+
+<!-- ── PIPELINE ── -->
+<div class="wrap sec">
+  <div class="reveal"><div class="sec-label">How It Works</div>
+  <div class="sec-title">3-Tier Matching Pipeline</div>
+  <div class="sec-sub">Every invoice passes three stages before being flagged as missing.</div></div>
+  <div class="pipeline reveal">
+    <div class="tier-card tier-1-card t1">
+      <div class="tier-num-label">Tier 1</div>
+      <div class="tier-icon-3d">⚡</div>
+      <h3>Exact Match</h3>
+      <p>Matches GSTIN + cleaned invoice number. Strips specials, leading zeros, and spacing — catches INV/2025/001 vs INV2025001 silently.</p>
+      <span class="tier-badge">Ready to Claim</span>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="tier-card tier-2-card t2">
+      <div class="tier-num-label">Tier 2</div>
+      <div class="tier-icon-3d">⚖️</div>
+      <h3>Tolerance Match</h3>
+      <p>Absorbs ERP rounding differences up to ₹1.00 per tax field — the most common source of false mismatches in Tally and SAP exports.</p>
+      <span class="tier-badge">Configurable ±₹</span>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="tier-card tier-3-card t3">
+      <div class="tier-num-label">Tier 3</div>
+      <div class="tier-icon-3d">🔍</div>
+      <h3>Fuzzy Match</h3>
+      <p>Levenshtein similarity on invoice numbers within the same GSTIN. Greedy one-to-one assignment — no invoice matched twice.</p>
+      <span class="tier-badge">≥90% Similarity</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── RESULT TABLE ── -->
+<div class="wrap" style="padding-bottom:96px;">
+  <div class="reveal"><div class="sec-label">Output Preview</div>
+  <div class="sec-title">Four Reconciliation Buckets</div>
+  <div class="sec-sub">Every invoice classified, exportable as styled Excel or PDF audit report.</div></div>
+  <div class="result-box reveal">
+    <div class="rb-header">
+      <div class="rb-dots"><span class="dot-r"></span><span class="dot-y"></span><span class="dot-g"></span></div>
+      <div class="rb-name">ITC_Reconciliation_Report_2025.xlsx</div>
+      <div class="rb-live">Live Output</div>
+    </div>
+    <div class="rb-body">
+      <table class="rt">
+        <thead><tr><th>Invoice No.</th><th>GSTIN</th><th>Vendor</th><th>Tax Diff ₹</th><th>Match Status</th></tr></thead>
+        <tbody>
+          <tr><td>INV/2025/001</td><td style="font-family:monospace;font-size:11px">33AACCS1234A1Z5</td><td>Sundaram Textiles</td><td>—</td><td><span class="badge b-exact">✓ Tier 1 Exact</span></td></tr>
+          <tr><td>PUR-2025-088</td><td style="font-family:monospace;font-size:11px">07AABCE7766G1Z3</td><td>Everest IT Solutions</td><td>₹0.50</td><td><span class="badge b-tol">≈ Tier 2 Tolerance</span></td></tr>
+          <tr><td>INV2025009</td><td style="font-family:monospace;font-size:11px">29AABCF5432H1Z8</td><td>Chennai Traders</td><td>—</td><td><span class="badge b-fuzz">~ Fuzzy 92%</span></td></tr>
+          <tr><td>BILL/25/042</td><td style="font-family:monospace;font-size:11px">27AAACR8765K1Z2</td><td>Raj Suppliers</td><td>₹11,880</td><td><span class="badge b-miss">✗ Missing in 2B</span></td></tr>
+          <tr><td>TAX-2025-311</td><td style="font-family:monospace;font-size:11px">33AACCS1234A1Z5</td><td>Sundaram Textiles</td><td>₹2,450</td><td><span class="badge b-mmis">⚠ Value Mismatch</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── FEATURE CARDS ── -->
+<div class="wrap" style="padding-bottom:96px;">
+  <div class="reveal"><div class="sec-label">Features</div>
+  <div class="sec-title">Everything Built-In</div>
+  <div class="sec-sub">Upload CSV or Excel — no portal access, no manual mapping needed.</div></div>
+  <div class="cards-grid">
+    <div class="feat-card reveal"          ><div class="feat-icon fi-green">🤖</div><h3>Auto Column Mapping</h3><p>Fuzzy-matches raw headers from any ERP — Tally, SAP, or custom Excel exports — to the engine's canonical schema.</p></div>
+    <div class="feat-card reveal reveal-d1"><div class="feat-icon fi-gold" >📨</div><h3>Vendor Nudge Bot</h3><p>Auto-drafts Section 16(2)(aa) compliance emails and WhatsApp notices per defaulting vendor with exact invoice lists.</p></div>
+    <div class="feat-card reveal reveal-d2"><div class="feat-icon fi-blue" >📈</div><h3>ML Risk Scoring</h3><p>Isolation Forest anomaly detection plus an explainable 0-100 risk score. Flags High / Medium / Low for prioritised follow-up.</p></div>
+    <div class="feat-card reveal"          ><div class="feat-icon fi-red"  >📊</div><h3>Excel + PDF Export</h3><p>One-click styled multi-sheet Excel workbook and a boardroom-ready PDF audit report with vendor risk tables.</p></div>
+    <div class="feat-card reveal reveal-d1"><div class="feat-icon fi-cyan" >🗓️</div><h3>Mixed Date Handling</h3><p>Parses YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY without month-swapping bugs — a silent failure in most naive scripts.</p></div>
+    <div class="feat-card reveal reveal-d2"><div class="feat-icon fi-purple">🔐</div><h3>GSTIN Validation</h3><p>Warns on non-standard 15-character GSTINs before reconciliation. Surfaces data quality issues early, not at filing time.</p></div>
+  </div>
+</div>
+
+<!-- ── RISK HEATMAP ── -->
+<div class="wrap" style="padding-bottom:100px;">
+  <div class="reveal"><div class="sec-label">Vendor Risk View</div>
+  <div class="sec-title">At-a-Glance Risk Heatmap</div>
+  <div class="sec-sub">Each cell = one vendor. Hover to feel the depth. Red = blocked ITC risk.</div></div>
+  <div class="heatmap-wrap reveal" id="heatmapWrap">
+    <div class="heatmap-box">
+      <div class="risk-grid">
+        <div class="rc rl">LOW</div><div class="rc rl">LOW</div><div class="rc rm">MED</div><div class="rc rh">HIGH</div>
+        <div class="rc rl">LOW</div><div class="rc rm">MED</div><div class="rc rl">LOW</div><div class="rc rh">HIGH</div>
+        <div class="rc rn">—</div>  <div class="rc rl">LOW</div><div class="rc rh">HIGH</div><div class="rc rl">LOW</div>
+        <div class="rc rm">MED</div><div class="rc rl">LOW</div><div class="rc rn">—</div>  <div class="rc rl">LOW</div>
+        <div class="rc rm">MED</div><div class="rc rl">LOW</div><div class="rc rl">LOW</div><div class="rc rh">HIGH</div>
+        <div class="rc rl">LOW</div><div class="rc rm">MED</div><div class="rc rl">LOW</div><div class="rc rn">—</div>
+      </div>
+      <div class="legend">
+        <div class="leg"><div class="leg-dot" style="background:rgba(239,68,68,0.5);border:1px solid rgba(239,68,68,0.4);"></div>High Risk (score ≥70)</div>
+        <div class="leg"><div class="leg-dot" style="background:rgba(245,158,11,0.4);border:1px solid rgba(245,158,11,0.3);"></div>Medium (≥40)</div>
+        <div class="leg"><div class="leg-dot" style="background:rgba(16,185,129,0.35);border:1px solid rgba(16,185,129,0.25);"></div>Low (&lt;40)</div>
+        <div class="leg"><div class="leg-dot" style="background:rgba(255,255,255,0.05);border:1px solid var(--border);"></div>No invoices</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── CTA ── -->
+<div class="cta-wrap">
+  <div class="cta-inner reveal">
+    <h2>Ready to Recover Your Blocked ITC?</h2>
+    <p>Upload your Purchase Register and GSTR-2B — full reconciliation in under 30 seconds.</p>
+    <div class="hero-btns" style="position:relative;">
+      <a class="btn-primary" href="https://itc-reconcilation-app-2zy97e7ciqmgl6cspzrhzy.streamlit.app/" target="_blank">🚀 Launch App Free</a>
+      <a class="btn-ghost"   href="https://github.com/bharathnidhi1-ctrl/itc-reconcilation-app" target="_blank">📂 GitHub Repo</a>
+    </div>
+  </div>
+</div>
+
+<!-- ── FOOTER ── -->
+<footer>
+  <div>© 2026 ITC Reconciliation Engine · Indian GST Compliance Tool</div>
+  <div class="footer-live">Live on Streamlit Cloud</div>
+  <div>Pandas · TheFuzz · scikit-learn · SQLAlchemy · Streamlit</div>
+</footer>
+
+<!-- ═══════════════════════════════════════
+     JAVASCRIPT
+═══════════════════════════════════════ -->
+<script>
+/* ── PARTICLE CANVAS ── */
+const canvas = document.getElementById('bg-canvas');
+const ctx = canvas.getContext('2d');
+let W, H, particles = [];
+
+function resize() {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+class Particle {
+  constructor() { this.reset(); }
+  reset() {
+    this.x  = Math.random() * W;
+    this.y  = Math.random() * H;
+    this.r  = Math.random() * 1.2 + 0.3;
+    this.vx = (Math.random() - 0.5) * 0.3;
+    this.vy = (Math.random() - 0.5) * 0.3;
+    this.a  = Math.random() * 0.5 + 0.1;
+    this.col= Math.random() > 0.6 ? '37,99,235' : Math.random() > 0.5 ? '16,185,129' : '245,158,11';
+  }
+  draw() {
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(${this.col},${this.a})`;
+    ctx.fill();
+    this.x += this.vx; this.y += this.vy;
+    if(this.x<0||this.x>W||this.y<0||this.y>H) this.reset();
+  }
+}
+
+for(let i=0;i<120;i++) particles.push(new Particle());
+
+// draw connecting lines
+function drawLines() {
+  for(let i=0;i<particles.length;i++) {
+    for(let j=i+1;j<particles.length;j++) {
+      const dx=particles[i].x-particles[j].x, dy=particles[i].y-particles[j].y;
+      const d=Math.sqrt(dx*dx+dy*dy);
+      if(d<110) {
+        ctx.beginPath();
+        ctx.moveTo(particles[i].x,particles[i].y);
+        ctx.lineTo(particles[j].x,particles[j].y);
+        ctx.strokeStyle=`rgba(37,99,235,${0.06*(1-d/110)})`;
+        ctx.lineWidth=0.5;
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+function animateParticles() {
+  ctx.clearRect(0,0,W,H);
+  drawLines();
+  particles.forEach(p=>p.draw());
+  requestAnimationFrame(animateParticles);
+}
+animateParticles();
+
+/* ── NAVBAR SCROLL ── */
+window.addEventListener('scroll', ()=>{
+  document.getElementById('navbar').classList.toggle('scrolled', window.scrollY > 50);
+});
+
+/* ── SCROLL REVEAL ── */
+const observer = new IntersectionObserver(entries=>{
+  entries.forEach(e=>{ if(e.isIntersecting) e.target.classList.add('visible'); });
+},{threshold:0.12});
+document.querySelectorAll('.reveal').forEach(el=>observer.observe(el));
+
+/* ── 3D MOUSE TILT — Hero Dashboard ── */
+const dash = document.getElementById('dash3d');
+document.addEventListener('mousemove', e=>{
+  const cx = window.innerWidth/2, cy = window.innerHeight/2;
+  const rx = (e.clientY - cy) / cy * -6;
+  const ry = (e.clientX - cx) / cx *  4;
+  dash.style.transform = `perspective(1000px) rotateX(${rx+12}deg) rotateY(${ry-3}deg)`;
+});
+
+/* ── 3D TILT — Feature Cards ── */
+document.querySelectorAll('.feat-card').forEach(card=>{
+  card.addEventListener('mousemove', e=>{
+    const r   = card.getBoundingClientRect();
+    const x   = e.clientX - r.left, y = e.clientY - r.top;
+    const cx  = r.width/2, cy = r.height/2;
+    const rx  = (y-cy)/cy * -10;
+    const ry  = (x-cx)/cx *  10;
+    const pct = `${(x/r.width*100).toFixed(0)}% ${(y/r.height*100).toFixed(0)}%`;
+    card.style.transform = `perspective(600px) rotateX(${rx}deg) rotateY(${ry}deg) translateZ(6px)`;
+    card.style.setProperty('--mx', `${x}px`);
+    card.style.setProperty('--my', `${y}px`);
+    card.style.borderColor = 'rgba(37,99,235,0.45)';
+  });
+  card.addEventListener('mouseleave', ()=>{
+    card.style.transform = '';
+    card.style.borderColor = '';
+  });
+});
+
+/* ── 3D TILT — Tier Cards ── */
+document.querySelectorAll('.tier-card').forEach(card=>{
+  card.addEventListener('mousemove', e=>{
+    const r  = card.getBoundingClientRect();
+    const rx = ((e.clientY-r.top )/r.height-0.5)*-14;
+    const ry = ((e.clientX-r.left)/r.width -0.5)* 14;
+    card.style.transform = `perspective(600px) rotateX(${rx}deg) rotateY(${ry}deg) translateZ(10px)`;
+  });
+  card.addEventListener('mouseleave', ()=>{ card.style.transform=''; });
+});
+
+/* ── HEATMAP MOUSE PARALLAX ── */
+const hw = document.getElementById('heatmapWrap');
+if(hw) {
+  hw.addEventListener('mousemove', e=>{
+    const r  = hw.getBoundingClientRect();
+    const rx = ((e.clientY-r.top )/r.height-0.5)*-10;
+    const ry = ((e.clientX-r.left)/r.width -0.5)* 6;
+    hw.style.transform = `perspective(800px) rotateX(${rx+4}deg) rotateY(${ry-1}deg)`;
+  });
+  hw.addEventListener('mouseleave', ()=>{
+    hw.style.transform = 'perspective(800px) rotateX(8deg) rotateY(-2deg)';
+  });
+}
+
+/* ── COUNTER ANIMATION ── */
+function animateCounters() {
+  document.querySelectorAll('.stat-val').forEach(el=>{
+    const text = el.textContent;
+    const num  = parseFloat(text.replace(/[^0-9.]/g,''));
+    if(!isNaN(num) && num > 0 && num < 1000) {
+      let start=0, dur=1200, step=16;
+      const inc = num/( dur/step );
+      const timer = setInterval(()=>{
+        start = Math.min(start+inc, num);
+        el.innerHTML = el.innerHTML.replace(/[\d.]+/, Math.floor(start));
+        if(start>=num) clearInterval(timer);
+      }, step);
+    }
+  });
+}
+const statsObs = new IntersectionObserver(e=>{
+  if(e[0].isIntersecting){ animateCounters(); statsObs.disconnect(); }
+},{threshold:0.5});
+const statsEl = document.querySelector('.stats-strip');
+if(statsEl) statsObs.observe(statsEl);
+</script>
+</body>
+</html>
